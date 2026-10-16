@@ -13,30 +13,60 @@
   p.intro { margin:0 0 16px; color:var(--mute); max-width:62ch; }
   button { font:inherit; padding:10px 22px; border:0; border-radius:6px; background:var(--ink); color:#fff; cursor:pointer; }
   button:focus-visible, input:focus-visible, summary:focus-visible { outline:3px solid var(--draw); outline-offset:2px; }
-  canvas { display:block; width:100%; height:140px; background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-top:16px; }
   details { margin-top:22px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 14px 14px; }
   summary { cursor:pointer; font-weight:600; }
-  canvas.in { margin-top:10px; }
-  .ctl { display:grid; grid-template-columns:120px 1fr 74px; gap:8px; align-items:center; margin-top:10px; }
-  .ctl output { text-align:right; font-variant-numeric:tabular-nums; color:var(--mute); }
-  .lock { display:grid; grid-template-columns:120px 1fr 74px; margin-top:4px; }
+  input[type=number] { width:100%; font:inherit; font-size:.9rem; padding:3px 5px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--ink); }
+  input[type=range] { width:100%; }
+  .ctl { display:grid; grid-template-columns:116px 1fr 76px 48px; gap:8px; align-items:center; margin-top:10px; }
+  .now { color:var(--mute); text-align:right; font-variant-numeric:tabular-nums; font-size:.85rem; }
+  .lock { display:grid; grid-template-columns:116px 1fr; margin-top:4px; }
   .lock button { grid-column:2; justify-self:start; padding:3px 9px; background:transparent; color:var(--mute); border:1px solid var(--line); line-height:0; }
   .lock button[aria-pressed="true"] { color:var(--ink); border-color:var(--ink); }
-  input[type=range] { width:100%; }
+  canvas { display:block; width:100%; height:240px; margin-top:10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; touch-action:none; }
+  .eqrow { display:grid; grid-template-columns:110px 1fr 1fr; gap:8px; align-items:center; margin-top:8px; }
+  .eqrow.head { color:var(--mute); font-size:.85rem; margin-top:12px; }
+  .key { color:var(--mute); font-size:.85rem; margin:8px 0 0; }
+
+  #trans { position:fixed; right:16px; top:84px; width:196px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; z-index:5; box-shadow:0 2px 10px rgba(23,33,43,.08); }
+  #trans button { width:100%; }
+  #trans .tt { margin-top:12px; font-size:.9rem; }
+  #trans .tt label { display:block; color:var(--mute); }
+  #trans .tt .tr { display:grid; grid-template-columns:1fr 62px; gap:8px; align-items:center; }
+  .bar { height:4px; background:var(--line); border-radius:2px; margin-top:12px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--out); }
+  @media (min-width: 900px) { body { padding-right:224px; } }
+  @media (max-width: 899px) {
+    main { padding-bottom:130px; }
+    #trans { top:auto; right:0; left:0; bottom:0; width:auto; border-radius:0; border-width:1px 0 0; padding:10px 16px; }
+    #trans .tt { margin-top:8px; }
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Gendy Drone</h1>
-  <p class="intro">Xenakis-style stochastic oscillator, the same as <code>Gendy1.ar(1,1,1,1,[40,40],[40,40],0.5,0.5)</code> in SuperCollider. Left and right run as two independent copies. Use headphones or a larger speaker.</p>
+  <p class="intro">Xenakis-style stochastic oscillator, the same as <code>Gendy1.ar(1,1,1,1,[40,40],[40,40],0.5,0.5)</code> in SuperCollider. Sliders and number boxes set <strong>goal</strong> values. The grey figure on each row is the value playing now. Press <em>Execute transition</em> to glide everything from now to goal. Use headphones or a larger speaker.</p>
   <button id="go">Start sound</button>
-  <canvas id="cScope"></canvas>
 
   <details open><summary>Oscillator</summary><div id="oscCtls"></div></details>
-  <details open><summary>EQ</summary><canvas id="cEq" class="in"></canvas><div id="eqCtls"></div></details>
+  <details open>
+    <summary>EQ</summary>
+    <canvas id="cEq" role="img" aria-label="EQ curve. Drag the numbered circles to set goal values, or use the number boxes below."></canvas>
+    <p class="key">Orange: goal (drag the circles). Grey: playing now.</p>
+    <div id="eqNum"></div>
+  </details>
   <details open><summary>Reverb</summary><div id="rvCtls"></div></details>
   <details open><summary>Low-pass filter</summary><div id="lpCtls"></div></details>
 </main>
+
+<aside id="trans" aria-label="Transition">
+  <button id="exec">Execute transition</button>
+  <div class="tt">
+    <label for="tt">Transition time (s)</label>
+    <div class="tr"><input id="tt" type="range" min="0" max="1000"><input id="ttn" type="number" step="any" min="0.1" max="60" aria-label="Transition time in seconds"></div>
+  </div>
+  <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+</aside>
 
 <script>
 // ---------- Gendy1 as an AudioWorklet (Cauchy distributions, 50 stored control points, knum of them in use) ----------
@@ -56,11 +86,11 @@ class Gendy extends AudioWorkletProcessor {
       idx: 0, phase: 1, amp: 0, next: 0, speed: 0
     }));
   }
-  cauchy() {                                    // adparam / ddparam = 1
+  cauchy() {
     const f = Math.min(Math.max(Math.random(), 0.0001), 0.9999);
     return Math.tan(Math.atan(10) * (2 * f - 1)) * 0.1;
   }
-  mirror(v, lo, hi) {                           // fold back into the range
+  mirror(v, lo, hi) {
     if (v >= lo && v <= hi) return v;
     const r = hi - lo; let x = (v - lo) % (2 * r); if (x < 0) x += 2 * r;
     return lo + (x > r ? 2 * r - x : x);
@@ -80,7 +110,7 @@ class Gendy extends AudioWorkletProcessor {
           const d = s.durs[s.idx] = this.mirror(s.durs[s.idx] + ds * this.cauchy(), 0, 1);
           s.speed = Math.min(1, (mins[c] + (maxs[c] - mins[c]) * d) * K / sampleRate);
         }
-        o[i] = s.amp + (s.next - s.amp) * s.phase;   // linear interpolation between breakpoints
+        o[i] = s.amp + (s.next - s.amp) * s.phase;
         s.phase += s.speed;
       }
     }
@@ -89,14 +119,20 @@ class Gendy extends AudioWorkletProcessor {
 }
 registerProcessor('gendy', Gendy);`;
 
-// ---------- parameters ----------
-const P = { minL: 40, minR: 40, maxL: 40, maxR: 40, ampscale: 0.5, durscale: 0.5, knum: 12, vol: 0.3, lpFreq: 20000, lpDepth: 60,
-            rvMix: 0.35, rvDecay: 12, rvPre: 40, rvDamp: 5000, rvLow: 150 };
-[80, 250, 2000, 6000].forEach((f, i) => { P["eq" + i + "f"] = f; P["eq" + i + "g"] = 0; });
+// ---------- values: P = current (what you hear), G = goal (what the controls set) ----------
+const D = { minL: 40, maxL: 40, minR: 40, maxR: 40, ampscale: 0.5, durscale: 0.5, knum: 12, vol: 0.3, bass: 0,
+            rvMix: 0.35, rvDecay: 12, rvPre: 40, rvDamp: 5000, rvLow: 150, lpFreq: 20000, lpDepth: 60 };
+[80, 250, 2000, 6000].forEach((f, i) => { D["eq" + i + "f"] = f; D["eq" + i + "g"] = 0; });
+const P = { ...D }, G = { ...D };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmt = (v, snap) => snap ? String(Math.round(v)) : Math.abs(v) < 10 ? v.toFixed(2) : Math.abs(v) < 100 ? v.toFixed(1) : String(Math.round(v));
+const $ = id => document.getElementById(id);
 
 // ---------- audio ----------
-let ctx = null, gendy, hp, eqF = [], dry, dly, conv, wLow, wHigh, wet, out, an, irTimer, fxSum, lpDry, lpWet, lpA, lpB;
+let ctx = null, initing = false, gendy, hp, eqF = [], dry, dly, convs = [], cg = [], activeC = 0;
+let wLow, wHigh, wet, fxSum, lpDry, lpWet, lpA, lpB, out, irTimer = null, sOsc, sGain;
 const eqTypes = ["lowshelf", "peaking", "peaking", "highshelf"];
+const sp = (prm, v) => initing ? (prm.value = v) : prm.setTargetAtTime(v, ctx.currentTime, 0.03);
 
 function makeIR(c, decay) {                       // long, dense stereo tail that darkens over time
   const sr = c.sampleRate, len = Math.floor(sr * decay * 1.2), buf = c.createBuffer(2, len, sr);
@@ -111,18 +147,28 @@ function makeIR(c, decay) {                       // long, dense stereo tail tha
   }
   return buf;
 }
-function scheduleIR() { clearTimeout(irTimer); irTimer = setTimeout(() => { if (ctx) conv.buffer = makeIR(ctx, P.rvDecay); }, 250); }
+// two convolvers: a new tail loads into the silent one and is crossfaded in, so decay can glide without clicks
+function swapIR() {
+  if (!ctx) return;
+  const nx = 1 - activeC, t = ctx.currentTime + 0.05;
+  convs[nx].buffer = makeIR(ctx, P.rvDecay);
+  cg[nx].gain.cancelScheduledValues(0); cg[activeC].gain.cancelScheduledValues(0);
+  cg[nx].gain.setValueAtTime(0, t); cg[nx].gain.linearRampToValueAtTime(1, t + 1);
+  cg[activeC].gain.setValueAtTime(1, t); cg[activeC].gain.linearRampToValueAtTime(0, t + 1);
+  activeC = nx;
+}
+function scheduleIR() { if (!irTimer) irTimer = setTimeout(() => { irTimer = null; swapIR(); }, 1500); }
+function setMix() { if (ctx) { sp(dry.gain, Math.cos(P.rvMix * Math.PI / 2)); sp(wet.gain, Math.sin(P.rvMix * Math.PI / 2)); } }
 function setLpf() {                               // depth = how far the highs are pushed down (0 to -60 dB)
   if (!ctx) return;
   const floor = Math.pow(10, -P.lpDepth / 20);
-  lpA.frequency.value = lpB.frequency.value = P.lpFreq;
-  lpDry.gain.value = floor; lpWet.gain.value = 1 - floor;
+  sp(lpA.frequency, P.lpFreq); sp(lpB.frequency, P.lpFreq);
+  sp(lpDry.gain, floor); sp(lpWet.gain, 1 - floor);
 }
-function setMix() { if (!ctx) return; dry.gain.value = Math.cos(P.rvMix * Math.PI / 2); wet.gain.value = Math.sin(P.rvMix * Math.PI / 2); }
 
 let blobUrl = null;
 async function startAudio() {
-  ctx = new AudioContext();
+  ctx = new AudioContext(); initing = true;
   blobUrl = blobUrl || URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" }));
   await ctx.audioWorklet.addModule(blobUrl);
   gendy = new AudioWorkletNode(ctx, "gendy", { numberOfInputs: 0, outputChannelCount: [2] });
@@ -135,30 +181,37 @@ async function startAudio() {
   });
   dry = ctx.createGain();
   dly = ctx.createDelay(0.5); dly.delayTime.value = P.rvPre / 1000;
-  conv = ctx.createConvolver(); conv.buffer = makeIR(ctx, P.rvDecay);
+  convs = [ctx.createConvolver(), ctx.createConvolver()]; cg = [ctx.createGain(), ctx.createGain()];
+  convs[0].buffer = makeIR(ctx, P.rvDecay); cg[0].gain.value = 1; cg[1].gain.value = 0; activeC = 0;
   wLow = ctx.createBiquadFilter(); wLow.type = "highpass"; wLow.frequency.value = P.rvLow;
   wHigh = ctx.createBiquadFilter(); wHigh.type = "lowpass"; wHigh.frequency.value = P.rvDamp;
-  wet = ctx.createGain();
-  out = ctx.createGain(); out.gain.value = P.vol;
-  fxSum = ctx.createGain();
+  wet = ctx.createGain(); fxSum = ctx.createGain();
   lpDry = ctx.createGain(); lpWet = ctx.createGain();
   lpA = ctx.createBiquadFilter(); lpA.type = "lowpass"; lpA.Q.value = -5.34;   // two Butterworth stages (Q in dB) = 24 dB/oct
   lpB = ctx.createBiquadFilter(); lpB.type = "lowpass"; lpB.Q.value = 2.33;
-  setLpf();
-  an = ctx.createAnalyser(); an.fftSize = 2048;
-  setMix();
+  out = ctx.createGain(); out.gain.value = P.vol;
+  setMix(); setLpf();
 
-  // Gendy -> EQ -> reverb (dry + wet) -> low-pass -> volume
+  // bass boost: a mono sine (feeds both channels equally) at the lowest Gendy frequency, added after the reverb
+  sOsc = ctx.createOscillator(); sOsc.type = "sine"; sOsc.frequency.value = lowestFreq();
+  sGain = ctx.createGain(); sGain.gain.value = P.bass;
+  sOsc.connect(sGain); sOsc.start();
+  sGain.connect(fxSum);
+
+  // Gendy -> EQ -> reverb (dry + wet) -> + bass sine -> low-pass -> volume
   gendy.connect(hp); hp.connect(eqF[0]); eqF[0].connect(eqF[1]); eqF[1].connect(eqF[2]); eqF[2].connect(eqF[3]);
   eqF[3].connect(dry); dry.connect(fxSum);
-  eqF[3].connect(dly); dly.connect(conv); conv.connect(wLow); wLow.connect(wHigh); wHigh.connect(wet); wet.connect(fxSum);
-  fxSum.connect(lpDry); lpDry.connect(out);                          // floor path (0 to -60 dB)
+  eqF[3].connect(dly);
+  convs.forEach((c, i) => { dly.connect(c); c.connect(cg[i]); cg[i].connect(wLow); });
+  wLow.connect(wHigh); wHigh.connect(wet); wet.connect(fxSum);
+  fxSum.connect(lpDry); lpDry.connect(out);
   fxSum.connect(lpA); lpA.connect(lpB); lpB.connect(lpWet); lpWet.connect(out);
-  out.connect(an); out.connect(ctx.destination);
+  out.connect(ctx.destination);
+  initing = false;
 }
 function stopAudio() { if (ctx) { ctx.close(); ctx = null; gendy = null; eqF = []; } }
 
-const go = document.getElementById("go");
+const go = $("go");
 go.onclick = async () => {
   go.disabled = true;
   if (ctx) { stopAudio(); go.textContent = "Start sound"; }
@@ -166,79 +219,82 @@ go.onclick = async () => {
   go.disabled = false;
 };
 
-// ---------- EQ response display (offline filters only used for drawing) ----------
-const dispF = eqTypes.map((t, i) => {
-  const b = new OfflineAudioContext(1, 1, 44100).createBiquadFilter();
-  b.type = t; b.frequency.value = P["eq" + i + "f"]; b.gain.value = P["eq" + i + "g"]; return b;
-});
-function setEq(i, param, v) { dispF[i][param].value = v; if (eqF[i]) eqF[i][param].value = v; drawEq(); }
-function fit(cv) {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-  return [g, w, h];
-}
-function drawEq() {
-  const [g, w, h] = fit(document.getElementById("cEq")), M = 200;
-  const fr = new Float32Array(M), mag = new Float32Array(M), ph = new Float32Array(M), tot = new Float32Array(M).fill(1);
-  for (let i = 0; i < M; i++) fr[i] = 20 * Math.pow(1000, i / (M - 1));
-  dispF.forEach(f => { f.getFrequencyResponse(fr, mag, ph); for (let i = 0; i < M; i++) tot[i] *= mag[i]; });
-  g.strokeStyle = "#cfd6dd"; g.lineWidth = 1; g.beginPath();
-  for (const db of [-12, -6, 0, 6, 12]) { const y = h / 2 - db / 18 * (h / 2); g.moveTo(0, y); g.lineTo(w, y); }
-  g.stroke();
-  g.strokeStyle = "#c2410c"; g.lineWidth = 2.5; g.beginPath();
-  for (let i = 0; i < M; i++) {
-    const y = h / 2 - Math.max(-18, Math.min(18, 20 * Math.log10(tot[i]))) / 18 * (h / 2);
-    i ? g.lineTo(i / (M - 1) * w, y) : g.moveTo(0, y);
-  }
-  g.stroke();
-}
+// ---------- parameter registry ----------
+const reg = {}, links = {}, lock = { L: true, R: true };
+const gp = k => v => gendy && (gendy.parameters.get(k).value = v);
+const eqApply = i => () => { if (ctx && eqF[i]) { sp(eqF[i].frequency, P["eq" + i + "f"]); sp(eqF[i].gain, P["eq" + i + "g"]); } };
 
-// ---------- scope ----------
-const tb = new Float32Array(2048);
-function drawScope() {
-  const [g, w, h] = fit(document.getElementById("cScope"));
-  g.strokeStyle = "#cfd6dd"; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
-  g.strokeStyle = "#c2410c"; g.lineWidth = 2; g.beginPath();
-  if (ctx && an) {
-    an.getFloatTimeDomainData(tb);
-    for (let i = 0; i < tb.length; i++) {
-      const y = h / 2 - Math.max(-1, Math.min(1, tb[i])) * (h / 2 - 4);
-      i ? g.lineTo(i / (tb.length - 1) * w, y) : g.moveTo(0, y);
-    }
-  } else { g.moveTo(0, h / 2); g.lineTo(w, h / 2); }
-  g.stroke();
-}
-setInterval(drawScope, 100);   // 10 fps
-
-// ---------- sliders ----------
-const ctl = {}, links = {}, lock = { L: true, R: true };
-const setPos = (key, pos) => {
-  const c = ctl[key]; c.pos = pos; c.input.value = Math.round(pos * 1000);
-  let v = c.fromPos(pos); if (c.snap) v = Math.round(v);
-  P[key] = v; c.out.textContent = c.fmt(v);
-  if (c.apply) c.apply(v);
-};
-const addSliders = (box, list) => list.forEach(([key, label, lo, hi, log, fmt, apply, snap]) => {
-  const row = document.createElement("div"); row.className = "ctl";
-  const id = "s_" + key;
+function def(key, lo, hi, log, apply, snap) {
   const toPos = v => log ? Math.log(v / lo) / Math.log(hi / lo) : (v - lo) / (hi - lo);
   const fromPos = p => log ? lo * Math.pow(hi / lo, p) : lo + p * (hi - lo);
-  row.innerHTML = `<label for="${id}">${label}</label>
-    <input id="${id}" type="range" min="0" max="1000" value="${Math.round(toPos(P[key]) * 1000)}">
-    <output>${fmt(P[key])}</output>`;
-  const input = row.querySelector("input");
-  ctl[key] = { input, out: row.querySelector("output"), fromPos, fmt, apply, snap, pos: toPos(P[key]) };
-  input.oninput = () => {
-    const p = input.value / 1000, c = ctl[key], L = links[key];
-    if (L && L.on()) {                          // linked: both sliders travel the same distance
-      const q = ctl[L.partner];
-      const d = Math.max(-Math.min(c.pos, q.pos), Math.min(1 - Math.max(c.pos, q.pos), p - c.pos));
-      setPos(key, c.pos + d); setPos(L.partner, q.pos + d);
-    } else setPos(key, p);
+  reg[key] = { key, lo, hi, apply, snap, toPos, fromPos, gpos: toPos(D[key]), slider: null, nums: [], now: null };
+}
+// the bass sine follows the lowest of the four Gendy frequencies (current values, so it glides with transitions)
+const lowestFreq = () => Math.min(P.minL, P.maxL, P.minR, P.maxR);
+const setBassFreq = () => { if (ctx && sOsc) sp(sOsc.frequency, lowestFreq()); };
+["minL", "maxL", "minR", "maxR"].forEach(k => def(k, 0.1, 1000, true, v => { gp(k)(v); setBassFreq(); }));
+def("ampscale", 0, 1, false, gp("ampscale"));
+def("durscale", 0, 1, false, gp("durscale"));
+def("knum", 10, 50, false, gp("knum"), true);
+def("vol", 0, 1, false, v => ctx && sp(out.gain, v));
+def("bass", 0, 1, false, v => ctx && sp(sGain.gain, v));
+def("rvMix", 0, 1, false, setMix);
+def("rvDecay", 2, 25, true, scheduleIR);
+def("rvPre", 0, 250, false, v => ctx && sp(dly.delayTime, v / 1000));
+def("rvDamp", 800, 16000, true, v => ctx && sp(wHigh.frequency, v));
+def("rvLow", 20, 600, true, v => ctx && sp(wLow.frequency, v));
+def("lpFreq", 20, 22050, true, setLpf);            // capped at Nyquist (44.1 kHz sample rate)
+def("lpDepth", 0, 60, false, setLpf);
+for (let i = 0; i < 4; i++) { def("eq" + i + "f", 20, 20000, true, eqApply(i)); def("eq" + i + "g", -15, 15, false, eqApply(i)); }
+
+// goal side: controls only ever change G
+let queueEq = () => {};                            // replaced once the EQ canvas exists
+function refresh(key) {
+  const r = reg[key];
+  if (r.slider) r.slider.value = Math.round(r.gpos * 1000);
+  r.nums.forEach(i => i.value = fmt(G[key], r.snap));
+  if (key.startsWith("eq")) queueEq();
+}
+function goalTo(key, pos) {
+  const r = reg[key]; r.gpos = clamp(pos, 0, 1);
+  let v = r.fromPos(r.gpos); if (r.snap) v = Math.round(v);
+  G[key] = v; refresh(key);
+}
+function goalLinked(key, p) {                      // linked pairs travel the same distance on the slider
+  const r = reg[key], L = links[key];
+  if (L && L.on()) {
+    const q = reg[L.partner];
+    const d = Math.max(-Math.min(r.gpos, q.gpos), Math.min(1 - Math.max(r.gpos, q.gpos), p - r.gpos));
+    goalTo(key, r.gpos + d); goalTo(L.partner, q.gpos + d);
+  } else goalTo(key, p);
+}
+// current side: only the transition changes P
+function setCurrent(key, v) { P[key] = v; reg[key].apply(v); }
+const updateNow = k => { const r = reg[k]; if (r.now) r.now.textContent = fmt(P[k], r.snap); };
+
+// ---------- UI builders ----------
+function numInput(key, label) {
+  const r = reg[key], i = document.createElement("input");
+  i.type = "number"; i.step = "any"; i.min = r.lo; i.max = r.hi; i.setAttribute("aria-label", label);
+  i.onchange = () => {
+    let v = parseFloat(i.value);
+    if (!isFinite(v)) { refresh(key); return; }
+    v = clamp(v, r.lo, r.hi); if (r.snap) v = Math.round(v);
+    goalLinked(key, r.toPos(v));
+    refresh(key);                                  // shows the clamped value if the typed one was out of range
   };
-  box.appendChild(row);
-});
+  r.nums.push(i); return i;
+}
+function addRow(box, key, label) {
+  const r = reg[key], row = document.createElement("div"); row.className = "ctl";
+  const lab = document.createElement("label"); lab.textContent = label; lab.htmlFor = "s_" + key;
+  const sl = document.createElement("input"); sl.type = "range"; sl.min = 0; sl.max = 1000; sl.id = "s_" + key;
+  sl.oninput = () => goalLinked(key, sl.value / 1000);
+  const now = document.createElement("span"); now.className = "now"; now.title = "playing now";
+  r.slider = sl; r.now = now;
+  row.append(lab, sl, numInput(key, label), now); box.appendChild(row);
+  refresh(key); updateNow(key);
+}
 const padlock = on => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="${on ? "M8 11V8a4 4 0 0 1 8 0v3" : "M8 11V8a4 4 0 0 1 7.5-2"}"/></svg>`;
 function addLock(box, side, a, b) {
   const row = document.createElement("div"); row.className = "lock";
@@ -253,48 +309,151 @@ function addLock(box, side, a, b) {
   links[a] = { partner: b, on: () => lock[side] };
   links[b] = { partner: a, on: () => lock[side] };
 }
-const f2 = v => v.toFixed(2), hz = v => (v < 10 ? v.toFixed(1) : Math.round(v)) + " Hz";
-const gp = k => v => gendy && (gendy.parameters.get(k).value = v);
 
-const oscBox = document.getElementById("oscCtls");
-const fq = (k, label) => [[k, label, 1, 1000, true, hz, gp(k)]];
-addSliders(oscBox, fq("minL", "Min freq left"));
-addLock(oscBox, "L", "minL", "maxL");
-addSliders(oscBox, fq("maxL", "Max freq left"));
-addSliders(oscBox, fq("minR", "Min freq right"));
-addLock(oscBox, "R", "minR", "maxR");
-addSliders(oscBox, fq("maxR", "Max freq right"));
-addSliders(oscBox, [
-  ["ampscale", "Amp scale", 0, 1, false, f2, gp("ampscale")],
-  ["durscale", "Dur scale", 0, 1, false, f2, gp("durscale")],
-  ["knum",     "Knum",      10, 50, false, v => Math.round(v), gp("knum"), true],
-  ["vol",      "Volume",    0, 1, false, f2, v => out && (out.gain.value = v)],
-]);
+const osc = $("oscCtls");
+addRow(osc, "minL", "Min freq left (Hz)");
+addLock(osc, "L", "minL", "maxL");
+addRow(osc, "maxL", "Max freq left (Hz)");
+addRow(osc, "minR", "Min freq right (Hz)");
+addLock(osc, "R", "minR", "maxR");
+addRow(osc, "maxR", "Max freq right (Hz)");
+addRow(osc, "ampscale", "Amp scale");
+addRow(osc, "durscale", "Dur scale");
+addRow(osc, "knum", "Knum");
+addRow(osc, "vol", "Volume");
+addRow(osc, "bass", "Bass boost");
 
-const names = ["Low shelf", "Low mid", "High mid", "High shelf"];
-const range = [[30, 300], [100, 1000], [500, 6000], [2000, 16000]];
-const eqDefs = [];
-names.forEach((nm, i) => {
-  eqDefs.push(["eq" + i + "f", nm + " freq", range[i][0], range[i][1], true, hz, v => setEq(i, "frequency", v)]);
-  eqDefs.push(["eq" + i + "g", nm + " gain", -15, 15, false, v => v.toFixed(1) + " dB", v => setEq(i, "gain", v)]);
+addRow($("rvCtls"), "rvMix", "Mix");
+addRow($("rvCtls"), "rvDecay", "Decay (s)");
+addRow($("rvCtls"), "rvPre", "Pre-delay (ms)");
+addRow($("rvCtls"), "rvDamp", "Damping (Hz)");
+addRow($("rvCtls"), "rvLow", "Low cut (Hz)");
+addRow($("lpCtls"), "lpFreq", "Cutoff (Hz)");
+addRow($("lpCtls"), "lpDepth", "Depth (-dB)");
+
+// ---------- EQ: draggable circles ----------
+const FMIN = 20, FMAX = 20000, GR = 18;
+const xOf = (f, w) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * w;
+const yOf = (g, h) => h / 2 - g / GR * (h / 2);
+const dispF = (() => { const c = new OfflineAudioContext(1, 1, 44100); return eqTypes.map(t => { const b = c.createBiquadFilter(); b.type = t; return b; }); })();
+const cEq = $("cEq");
+
+function respond(src, fr) {
+  const M = fr.length, mag = new Float32Array(M), ph = new Float32Array(M), tot = new Float32Array(M).fill(1);
+  dispF.forEach((f, i) => {
+    f.frequency.value = src["eq" + i + "f"]; f.gain.value = src["eq" + i + "g"];
+    f.getFrequencyResponse(fr, mag, ph); for (let k = 0; k < M; k++) tot[k] *= mag[k];
+  });
+  return tot;
+}
+function drawEq() {
+  const dpr = window.devicePixelRatio || 1, w = cEq.clientWidth, h = cEq.clientHeight;
+  if (cEq.width !== Math.round(w * dpr)) { cEq.width = Math.round(w * dpr); cEq.height = Math.round(h * dpr); }
+  const g = cEq.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.font = "11px system-ui, sans-serif"; g.fillStyle = "#5d6b79"; g.lineWidth = 1; g.strokeStyle = "#e1e6eb";
+  g.beginPath();
+  for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) { g.moveTo(xOf(f, w), 0); g.lineTo(xOf(f, w), h); }
+  for (const db of [-12, -6, 6, 12]) { g.moveTo(0, yOf(db, h)); g.lineTo(w, yOf(db, h)); }
+  g.stroke();
+  g.strokeStyle = "#aab4be"; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+  [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, t]) => g.fillText(t, xOf(f, w) + 3, h - 4));
+  [-12, 0, 12].forEach(db => g.fillText((db > 0 ? "+" : "") + db, 4, yOf(db, h) - 3));
+
+  const M = 200, fr = new Float32Array(M);
+  for (let i = 0; i < M; i++) fr[i] = FMIN * Math.pow(FMAX / FMIN, i / (M - 1));
+  [[P, "#98a3ae", 2], [G, "#c2410c", 2.5]].forEach(([src, col, lw]) => {   // grey = playing now, orange = goal
+    const tot = respond(src, fr);
+    g.strokeStyle = col; g.lineWidth = lw; g.beginPath();
+    for (let i = 0; i < M; i++) {
+      const y = yOf(clamp(20 * Math.log10(tot[i]), -GR, GR), h);
+      i ? g.lineTo(i / (M - 1) * w, y) : g.moveTo(0, y);
+    }
+    g.stroke();
+  });
+  g.textAlign = "center"; g.textBaseline = "middle"; g.font = "bold 11px system-ui, sans-serif";
+  for (let i = 0; i < 4; i++) {
+    const x = xOf(G["eq" + i + "f"], w), y = yOf(G["eq" + i + "g"], h);
+    g.beginPath(); g.arc(x, y, 10, 0, 2 * Math.PI); g.fillStyle = "#fff"; g.fill();
+    g.strokeStyle = "#c2410c"; g.lineWidth = 2; g.stroke();
+    g.fillStyle = "#17212b"; g.fillText(String(i + 1), x, y + 0.5);
+  }
+  g.textAlign = "start"; g.textBaseline = "alphabetic";
+}
+let eqQ = false;
+queueEq = () => { if (!eqQ) { eqQ = true; requestAnimationFrame(() => { eqQ = false; drawEq(); }); } };
+
+let dragI = -1;
+const where = e => { const r = cEq.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top, r.width, r.height]; };
+const nearest = (x, y, w, h) => {
+  let best = -1, bd = 18;
+  for (let i = 0; i < 4; i++) {
+    const d = Math.hypot(xOf(G["eq" + i + "f"], w) - x, yOf(G["eq" + i + "g"], h) - y);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+};
+cEq.addEventListener("pointerdown", e => {
+  const [x, y, w, h] = where(e), i = nearest(x, y, w, h);
+  if (i >= 0) { dragI = i; cEq.setPointerCapture(e.pointerId); cEq.style.cursor = "grabbing"; }
 });
-addSliders(document.getElementById("eqCtls"), eqDefs);
+cEq.addEventListener("pointermove", e => {
+  const [x, y, w, h] = where(e);
+  if (dragI < 0) { cEq.style.cursor = nearest(x, y, w, h) >= 0 ? "grab" : "default"; return; }
+  const kf = "eq" + dragI + "f", kg = "eq" + dragI + "g";
+  const f = clamp(FMIN * Math.pow(FMAX / FMIN, x / w), reg[kf].lo, reg[kf].hi);
+  const gn = clamp((h / 2 - y) / (h / 2) * GR, reg[kg].lo, reg[kg].hi);
+  goalTo(kf, reg[kf].toPos(f));
+  goalTo(kg, reg[kg].toPos(gn));
+});
+const endDrag = () => { dragI = -1; cEq.style.cursor = "default"; };
+cEq.addEventListener("pointerup", endDrag); cEq.addEventListener("pointercancel", endDrag);
 
-addSliders(document.getElementById("rvCtls"), [
-  ["rvMix",   "Mix",            0, 1, false, f2, setMix],
-  ["rvDecay", "Decay (s)",      2, 25, true, v => v.toFixed(1), scheduleIR],
-  ["rvPre",   "Pre-delay (ms)", 0, 250, false, v => Math.round(v) + " ms", v => dly && (dly.delayTime.value = v / 1000)],
-  ["rvDamp",  "Damping",        800, 16000, true, hz, v => wHigh && (wHigh.frequency.value = v)],
-  ["rvLow",   "Low cut",        20, 600, true, hz, v => wLow && (wLow.frequency.value = v)],
-]);
+// number boxes for the four bands (typed values are clamped to the allowed range)
+const bandNames = ["Low shelf", "Low mid", "High mid", "High shelf"];
+const eqBox = $("eqNum");
+eqBox.insertAdjacentHTML("beforeend", '<div class="eqrow head"><span></span><span>Freq (Hz)</span><span>Gain (dB)</span></div>');
+bandNames.forEach((nm, i) => {
+  const row = document.createElement("div"); row.className = "eqrow";
+  const lab = document.createElement("span"); lab.textContent = (i + 1) + " " + nm;
+  row.append(lab, numInput("eq" + i + "f", nm + " frequency in Hz"), numInput("eq" + i + "g", nm + " gain in dB"));
+  eqBox.appendChild(row); refresh("eq" + i + "f"); refresh("eq" + i + "g");
+});
 
-addSliders(document.getElementById("lpCtls"), [
-  ["lpFreq",  "Cutoff",     20, 20000, true, hz, setLpf],
-  ["lpDepth", "Depth (dB)", 0, 60, false, v => (v < 0.5 ? "0" : "-" + Math.round(v)) + " dB", setLpf],
-]);
+// ---------- transition ----------
+let T = 10, tr = null, tk = 0;
+const tlo = 0.1, thi = 60, tt = $("tt"), ttn = $("ttn"), prog = $("prog");
+const setT = v => { T = clamp(v, tlo, thi); ttn.value = fmt(T); tt.value = Math.round(Math.log(T / tlo) / Math.log(thi / tlo) * 1000); };
+tt.oninput = () => setT(tlo * Math.pow(thi / tlo, tt.value / 1000));
+ttn.onchange = () => { const v = parseFloat(ttn.value); setT(isFinite(v) ? v : T); };
+setT(T);
 
-window.addEventListener("resize", () => { drawEq(); drawScope(); });
-drawEq(); drawScope();
+const keys = Object.keys(reg);
+function execute() {                               // glide from the current values to the goal values
+  const from = {}, to = {}, toV = {};
+  keys.forEach(k => { from[k] = reg[k].toPos(P[k]); to[k] = reg[k].toPos(G[k]); toV[k] = G[k]; });
+  tr = { t0: performance.now(), dur: T * 1000, from, to, toV };
+}
+$("exec").onclick = execute;
+
+setInterval(() => {                                // 30 Hz
+  tk++;
+  if (tr) {
+    const u = Math.min(1, (performance.now() - tr.t0) / tr.dur);
+    keys.forEach(k => {
+      if (tr.from[k] === tr.to[k]) return;
+      const r = reg[k];
+      let v = u >= 1 ? tr.toV[k] : r.fromPos(tr.from[k] + (tr.to[k] - tr.from[k]) * u);
+      if (r.snap) v = Math.round(v);
+      setCurrent(k, v);
+    });
+    prog.style.width = (u * 100) + "%";
+    if (u >= 1) { tr = null; keys.forEach(updateNow); drawEq(); setTimeout(() => { if (!tr) prog.style.width = "0"; }, 700); }
+  }
+  if (tk % 3 === 0) { keys.forEach(updateNow); if (tr) drawEq(); }   // 10 fps readout
+}, 1000 / 30);
+
+window.addEventListener("resize", drawEq);
+drawEq();
 </script>
 </body>
 </html>
